@@ -18,7 +18,7 @@ const int HEIGHT = 600;
 
 // 【Lesson4新增】实例计数（多个三角形）
 const int INSTANCE_COUNT = 100;
-
+//-------------------------------------Tools-------------------------------------------
 // 读取SPV文件
 std::vector<char> readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::ate | std::ios::binary);
@@ -30,34 +30,39 @@ std::vector<char> readFile(const std::string& filename) {
     file.close();
     return buffer;
 }
-
-void InitVulkan() {}
-
-int main() {
-    // 初始化 GLFW
+//------------------------------------Process------------------------------------------
+//创建窗口(初始化 GLFW，告诉它“我不打算用 OpenGL”)
+GLFWwindow* InitWindow(int w, int h, std::string winName){
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
-
-    // 创建 Vulkan 实例
+    return glfwCreateWindow(w, h, winName.c_str(), nullptr, nullptr);
+}
+//创建 Vulkan 实例（等于：跟系统打招呼“我要用 Vulkan”）
+vk::UniqueInstance InitInstance() {
     vk::ApplicationInfo appInfo("Lesson 3", 1, "NoEngine", 1, VK_API_VERSION_1_0);
     vk::InstanceCreateInfo createInfo({}, &appInfo);
 
-    auto extensions = glfwGetRequiredInstanceExtensions(&createInfo.enabledExtensionCount);
+    auto extensions = glfwGetRequiredInstanceExtensions(&createInfo.enabledExtensionCount);//remember to add extentions
     createInfo.ppEnabledExtensionNames = extensions;
-    vk::UniqueInstance instance = vk::createInstanceUnique(createInfo);
+    return vk::createInstanceUnique(createInfo);
+}
 
-    // 创建 Surface
+//创建 Surface（vulkan与操作系统窗口(glfw)之间的跑腿小哥，对接作用）
+vk::SurfaceKHR InitSurface(
+    const vk::UniqueInstance& instance, 
+    GLFWwindow* window) 
+{
     VkSurfaceKHR c_surface;
     if (glfwCreateWindowSurface(static_cast<VkInstance>(*instance), window, nullptr, &c_surface) != VK_SUCCESS)
         throw std::runtime_error("failed to create window surface!");
-    vk::SurfaceKHR surface = c_surface;
+    return c_surface;
+}
 
-    // 选择物理设备
-    auto gpus = instance->enumeratePhysicalDevices();
-    auto physicalDevice = gpus[0];
-
-    // 获取队列家族
+//创建硬件队列家族（画师家族）
+std::optional<uint32_t> InitGraphicFamily(
+    const vk::PhysicalDevice& physicalDevice, 
+    const vk::SurfaceKHR& surface) 
+{
     auto families = physicalDevice.getQueueFamilyProperties();
     std::optional<uint32_t> graphicsFamily;
     for (uint32_t i = 0; i < families.size(); ++i) {
@@ -67,35 +72,47 @@ int main() {
         }
     }
     if (!graphicsFamily.has_value()) throw std::runtime_error("no suitable queue family found");
+    return graphicsFamily;
+}
 
-    // 创建逻辑设备
+//逻辑设备：软件层来控制物理设备的中间层，就像个仪表盘一样——仪表盘接受人类的命令，然后控制硬件工作
+vk::UniqueDevice InitDevice(
+    const std::optional<uint32_t>& graphicsFamily, 
+    const vk::PhysicalDevice& physicalDevice) 
+{
     float priority = 1.0f;
     vk::DeviceQueueCreateInfo queueInfo({}, graphicsFamily.value(), 1, &priority);
     //重要！注意设备也需要扩展
     std::vector<const char*> deviceExtensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
     vk::DeviceCreateInfo deviceCreateInfo({}, queueInfo, {}, deviceExtensions);
-    vk::UniqueDevice device = physicalDevice.createDeviceUnique(deviceCreateInfo);
+    return physicalDevice.createDeviceUnique(deviceCreateInfo);
+}
 
-    vk::Queue graphicsQueue = device->getQueue(graphicsFamily.value(), 0);
-
-    // 获取 Surface 支持信息
-    auto formats = physicalDevice.getSurfaceFormatsKHR(surface);
-    auto capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+//传送带：运送framebuffer的工具，用来做多帧缓冲
+vk::UniqueSwapchainKHR InitSwapChain(
+    const vk::PhysicalDevice& physicalDevice,
+    const vk::UniqueDevice& device,
+    const vk::SurfaceKHR& surface, 
+    const vk::SurfaceCapabilitiesKHR& capabilities, 
+    const vk::SurfaceFormatKHR& surfaceFormat, 
+    const vk::Extent2D& extent) 
+{
     auto presentModes = physicalDevice.getSurfacePresentModesKHR(surface);
-
-    vk::SurfaceFormatKHR surfaceFormat = formats[0];
-    vk::Extent2D extent = capabilities.currentExtent;
-
-    // 创建 Swapchain
     vk::SwapchainCreateInfoKHR swapchainInfo({}, surface,
         capabilities.minImageCount, surfaceFormat.format, surfaceFormat.colorSpace,
         extent, 1, vk::ImageUsageFlagBits::eColorAttachment,
         vk::SharingMode::eExclusive, {}, vk::SurfaceTransformFlagBitsKHR::eIdentity,
         vk::CompositeAlphaFlagBitsKHR::eOpaque, presentModes[0], VK_TRUE);
 
-    vk::UniqueSwapchainKHR swapchain = device->createSwapchainKHRUnique(swapchainInfo);
+    return device->createSwapchainKHRUnique(swapchainInfo);
+}
 
-    // 获取 Swapchain 图片 & ImageViews
+//ImageView：传送带上各个画板（framebuffer）的画纸说明书，因为它决定了每张图片的格式、底色、用途（颜色、深度）等基本信息
+std::vector<vk::UniqueImageView> InitImageViews(
+    const vk::UniqueDevice& device, 
+    const vk::UniqueSwapchainKHR& swapchain, 
+    const vk::SurfaceFormatKHR& surfaceFormat) 
+{
     auto images = device->getSwapchainImagesKHR(*swapchain);
     std::vector<vk::UniqueImageView> imageViews;
     for (auto image : images) {
@@ -103,8 +120,14 @@ int main() {
             {}, { vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1 });
         imageViews.push_back(device->createImageViewUnique(viewInfo));
     }
+    return imageViews;
+}
 
-    // 创建 RenderPass
+//RenderPass：提前规划好的绘画步骤说明书，subpass则是每一步骤。默认带一个subpass.
+vk::UniqueRenderPass InitRenderPass(
+    const vk::SurfaceFormatKHR& surfaceFormat, 
+    const vk::UniqueDevice& device) 
+{
     vk::AttachmentDescription colorAttachment({}, surfaceFormat.format, vk::SampleCountFlagBits::e1,
         vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore,
         vk::AttachmentLoadOp::eDontCare, vk::AttachmentStoreOp::eDontCare,
@@ -117,16 +140,151 @@ int main() {
     subpass.pColorAttachments = &colorRef;
 
     vk::RenderPassCreateInfo renderPassInfo({}, 1, &colorAttachment, 1, &subpass);
-    vk::UniqueRenderPass renderPass = device->createRenderPassUnique(renderPassInfo);
+    return device->createRenderPassUnique(renderPassInfo);
+}
 
-    // 创建 Framebuffers
+//Framebuffer
+std::vector<vk::UniqueFramebuffer> InitFrameBuffer(
+    const std::vector<vk::UniqueImageView>& imageViews,
+    const vk::UniqueRenderPass& renderPass,
+    const vk::Extent2D& extent,
+    const vk::UniqueDevice& device)
+{
     std::vector<vk::UniqueFramebuffer> framebuffers;
     for (auto& view : imageViews) {
         vk::FramebufferCreateInfo fbInfo({}, *renderPass, 1, &*view, extent.width, extent.height, 1);
         framebuffers.push_back(device->createFramebufferUnique(fbInfo));
     }
+    return framebuffers;
+}
+
+//Pipeline
+vk::UniquePipeline InitPipeline(
+    const vk::Extent2D& extent, 
+    const vk::UniqueDevice& device,
+    const vk::UniqueRenderPass& renderPass,
+    const vk::UniqueDescriptorSetLayout& descriptorSetLayout, 
+    std::array<vk::PipelineShaderStageCreateInfo, 2> stages,
+    vk::UniquePipelineLayout& pipelineLayout)
+{
+    vk::PipelineVertexInputStateCreateInfo vertexInput;
+    vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList);
+    vk::Viewport viewport(0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f);
+    vk::Rect2D scissor({ 0, 0 }, extent);
+    vk::PipelineViewportStateCreateInfo viewportState({}, 1, &viewport, 1, &scissor);
+    vk::PipelineRasterizationStateCreateInfo rasterizer({}, false, false, vk::PolygonMode::eFill,
+        vk::CullModeFlagBits::eBack, vk::FrontFace::eClockwise);
+    vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1);
+    vk::PipelineColorBlendAttachmentState blendState(false);
+    blendState.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+    vk::PipelineColorBlendStateCreateInfo colorBlending({}, false, vk::LogicOp::eCopy, 1, &blendState);
+
+    // 【修改】Pipeline Layout 现在包含 Descriptor Set
+    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &*descriptorSetLayout);
+    pipelineLayout = device->createPipelineLayoutUnique(pipelineLayoutInfo);
+
+    vk::GraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.stageCount = 2;
+    pipelineInfo.pStages = stages.data();
+    pipelineInfo.pVertexInputState = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState = &multisampling;
+    pipelineInfo.pColorBlendState = &colorBlending;
+    pipelineInfo.layout = *pipelineLayout;
+    pipelineInfo.renderPass = *renderPass;
+    pipelineInfo.subpass = 0;
+
+    auto pipelineResult = device->createGraphicsPipelineUnique({}, pipelineInfo);
+    return std::move(pipelineResult.value);
+}
+
+//DescriptorSet
+std::vector<vk::UniqueDescriptorSet, std::allocator<vk::UniqueDescriptorSet>> InitDescriptorSets(
+    const vk::UniqueDevice& device, 
+    vk::UniqueDescriptorSetLayout& descriptorSetLayout, 
+    vk::UniqueDescriptorPool& descriptorPool
+    )
+{
+    // 2. 创建 Descriptor Set Layout
+    vk::DescriptorSetLayoutBinding binding(
+        0, // binding
+        vk::DescriptorType::eUniformBuffer,
+        1,
+        vk::ShaderStageFlagBits::eFragment
+    );
+    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, 1, &binding);
+    descriptorSetLayout = device->createDescriptorSetLayoutUnique(layoutInfo);
+
+    // 3. 创建 Descriptor Pool & Set
+    vk::DescriptorPoolSize DpoolSize(vk::DescriptorType::eUniformBuffer, 1);
+    vk::DescriptorPoolCreateInfo DpoolInfo({}, 1, 1, &DpoolSize);
+    descriptorPool = device->createDescriptorPoolUnique(DpoolInfo);
+
+    vk::DescriptorSetAllocateInfo allocSetInfo(*descriptorPool, 1, &*descriptorSetLayout);
+    return device->allocateDescriptorSetsUnique(allocSetInfo);
+}
+
+//加载shader
+std::array<vk::PipelineShaderStageCreateInfo, 2> InitShader(
+    const std::string& vertPath, 
+    const std::string& fragPath,
+    const vk::UniqueDevice& device) 
+{
+    auto vertCode = readFile(vertPath);
+    auto fragCode = readFile(fragPath);
+    vk::ShaderModuleCreateInfo vertInfo({}, vertCode.size(), reinterpret_cast<const uint32_t*>(vertCode.data()));
+    vk::ShaderModuleCreateInfo fragInfo({}, fragCode.size(), reinterpret_cast<const uint32_t*>(fragCode.data()));
+    vk::UniqueShaderModule vertShader = device->createShaderModuleUnique(vertInfo);
+    vk::UniqueShaderModule fragShader = device->createShaderModuleUnique(fragInfo);
+
+    vk::PipelineShaderStageCreateInfo vertStage({}, vk::ShaderStageFlagBits::eVertex, *vertShader, "main");
+    vk::PipelineShaderStageCreateInfo fragStage({}, vk::ShaderStageFlagBits::eFragment, *fragShader, "main");
+    return { vertStage, fragStage };//使用array而非传统数组，不然无法作形参传递
+}
+
+int main() {
+    //==============Init Vulkan===================
+    // 初始化 GLFW
+    GLFWwindow* window = InitWindow(WIDTH, HEIGHT, "Gamer");
+
+    // 创建 Vulkan 实例
+    vk::UniqueInstance instance = InitInstance();
+
+    // 创建 Surface
+    vk::SurfaceKHR surface = InitSurface(instance, window);
+
+    // 选择物理设备
+    vk::PhysicalDevice physicalDevice = instance->enumeratePhysicalDevices()[0];
+
+    // 获取队列家族
+    std::optional<uint32_t> graphicsFamily = InitGraphicFamily(physicalDevice, surface);
+
+    // 创建逻辑设备
+    vk::UniqueDevice device = InitDevice(graphicsFamily, physicalDevice);
+
+    vk::Queue graphicsQueue = device->getQueue(graphicsFamily.value(), 0);
+
+    // 获取 Surface 支持信息
+    vk::SurfaceCapabilitiesKHR capabilities = physicalDevice.getSurfaceCapabilitiesKHR(surface);
+    vk::SurfaceFormatKHR surfaceFormat = physicalDevice.getSurfaceFormatsKHR(surface)[0];
+    vk::Extent2D extent = capabilities.currentExtent;
+
+    // 创建 Swapchain
+    vk::UniqueSwapchainKHR swapchain = InitSwapChain(physicalDevice, device, surface, capabilities, surfaceFormat, extent);
+
+    // 获取 Swapchain 图片 & ImageViews
+    std::vector<vk::UniqueImageView> imageViews = InitImageViews(device, swapchain, surfaceFormat);
+
+    // 创建 RenderPass
+    vk::UniqueRenderPass renderPass = InitRenderPass(surfaceFormat, device);
+
+    // 创建 Framebuffers
+    std::vector<vk::UniqueFramebuffer> framebuffers = InitFrameBuffer(imageViews, renderPass, extent, device);
     
-    // ========== 【新增】Uniform Buffer 和 Descriptor Set ==========
+    // =========vertex相关的东西先写在这里吧===========
     // 1. 创建 Uniform Buffer
     vk::BufferCreateInfo bufferInfo(
         {},
@@ -160,23 +318,9 @@ int main() {
     memcpy(data, initialColor, sizeof(initialColor));
     device->unmapMemory(*uniformBufferMemory);
 
-    // 2. 创建 Descriptor Set Layout
-    vk::DescriptorSetLayoutBinding binding(
-        0, // binding
-        vk::DescriptorType::eUniformBuffer,
-        1,
-        vk::ShaderStageFlagBits::eFragment
-    );
-    vk::DescriptorSetLayoutCreateInfo layoutInfo({}, 1, &binding);
-    vk::UniqueDescriptorSetLayout descriptorSetLayout = device->createDescriptorSetLayoutUnique(layoutInfo);
-
-    // 3. 创建 Descriptor Pool & Set
-    vk::DescriptorPoolSize DpoolSize(vk::DescriptorType::eUniformBuffer, 1);
-    vk::DescriptorPoolCreateInfo DpoolInfo({}, 1, 1, &DpoolSize);
-    vk::UniqueDescriptorPool descriptorPool = device->createDescriptorPoolUnique(DpoolInfo);
-
-    vk::DescriptorSetAllocateInfo allocSetInfo(*descriptorPool, 1, &*descriptorSetLayout);
-    auto descriptorSets = device->allocateDescriptorSetsUnique(allocSetInfo);
+    vk::UniqueDescriptorSetLayout descriptorSetLayout;
+    vk::UniqueDescriptorPool descriptorPool;
+    std::vector<vk::UniqueDescriptorSet, std::allocator<vk::UniqueDescriptorSet>> descriptorSets = InitDescriptorSets(device, descriptorSetLayout, descriptorPool);
 
     // 4. 绑定 Uniform Buffer 到 Descriptor Set
     vk::DescriptorBufferInfo bufferDescInfo(*uniformBuffer, 0, sizeof(float) * 4);
@@ -190,55 +334,19 @@ int main() {
     device->updateDescriptorSets(descriptorWrite, nullptr);
     //-------------------
     // 加载 Shader
-    auto vertCode = readFile("Shader/test.vert.spv");
-    auto fragCode = readFile("Shader/test.frag.spv");
-    vk::ShaderModuleCreateInfo vertInfo({}, vertCode.size(), reinterpret_cast<const uint32_t*>(vertCode.data()));
-    vk::ShaderModuleCreateInfo fragInfo({}, fragCode.size(), reinterpret_cast<const uint32_t*>(fragCode.data()));
-    vk::UniqueShaderModule vertShader = device->createShaderModuleUnique(vertInfo);
-    vk::UniqueShaderModule fragShader = device->createShaderModuleUnique(fragInfo);
-
-    vk::PipelineShaderStageCreateInfo vertStage({}, vk::ShaderStageFlagBits::eVertex, *vertShader, "main");
-    vk::PipelineShaderStageCreateInfo fragStage({}, vk::ShaderStageFlagBits::eFragment, *fragShader, "main");
-    vk::PipelineShaderStageCreateInfo stages[] = { vertStage, fragStage };
+    std::array<vk::PipelineShaderStageCreateInfo, 2> stages = InitShader("Shader/test.vert.spv", "Shader/test.frag.spv", device);
 
     // Pipeline 相关设置
-    vk::PipelineVertexInputStateCreateInfo vertexInput;
-    vk::PipelineInputAssemblyStateCreateInfo inputAssembly({}, vk::PrimitiveTopology::eTriangleList);
-    vk::Viewport viewport(0.0f, 0.0f, (float)extent.width, (float)extent.height, 0.0f, 1.0f);
-    vk::Rect2D scissor({ 0, 0 }, extent);
-    vk::PipelineViewportStateCreateInfo viewportState({}, 1, &viewport, 1, &scissor);
-    vk::PipelineRasterizationStateCreateInfo rasterizer({}, false, false, vk::PolygonMode::eFill,
-        vk::CullModeFlagBits::eBack, vk::FrontFace::eClockwise);
-    vk::PipelineMultisampleStateCreateInfo multisampling({}, vk::SampleCountFlagBits::e1);
-    vk::PipelineColorBlendAttachmentState blendState(false);
-    blendState.colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
-    vk::PipelineColorBlendStateCreateInfo colorBlending({}, false, vk::LogicOp::eCopy, 1, &blendState);
-
-    // 【修改】Pipeline Layout 现在包含 Descriptor Set
-    vk::PipelineLayoutCreateInfo pipelineLayoutInfo({}, 1, &*descriptorSetLayout);
-    vk::UniquePipelineLayout pipelineLayout = device->createPipelineLayoutUnique(pipelineLayoutInfo);
-
-    vk::GraphicsPipelineCreateInfo pipelineInfo({}, 2, stages);
-    pipelineInfo.pVertexInputState = &vertexInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState = &multisampling;
-    pipelineInfo.pColorBlendState = &colorBlending;
-    pipelineInfo.layout = *pipelineLayout;
-    pipelineInfo.renderPass = *renderPass;
-    pipelineInfo.subpass = 0;
-
-    auto pipelineResult = device->createGraphicsPipelineUnique({}, pipelineInfo);
-    vk::UniquePipeline pipeline = std::move(pipelineResult.value);
-
+    vk::UniquePipelineLayout pipelineLayout;//将要引用传递进InitPipeline
+    vk::UniquePipeline pipeline = InitPipeline(extent, device, renderPass, descriptorSetLayout, stages, pipelineLayout);
+    
     // 【8】创建 command pool 和 command buffer（等于：GPU“任务纸条”）
     vk::CommandPoolCreateInfo poolInfo({}, graphicsFamily.value());
     auto commandPool = device->createCommandPoolUnique(poolInfo);
     std::vector<vk::UniqueCommandBuffer> commandBuffers =
         device->allocateCommandBuffersUnique({ *commandPool, vk::CommandBufferLevel::ePrimary, (uint32_t)framebuffers.size() });
 
+    //提前录制commandbuffer阶段
     for (size_t i = 0; i < commandBuffers.size(); ++i) {
         auto& cmd = commandBuffers[i];
         cmd->begin({ vk::CommandBufferUsageFlagBits::eSimultaneousUse });
