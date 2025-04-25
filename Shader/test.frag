@@ -1,20 +1,20 @@
 #version 450
-
-// 从 Vertex Shader 输入的颜色（如果启用）
 layout(location = 0) in vec3 fragColor;
+layout(location = 1) in vec2 fragPos;  // 【新增】接收顶点位置
 
-// 最终输出颜色
 layout(location = 0) out vec4 outColor;
 
-// 【关键修改】Uniform Buffer（与 C++ 代码绑定）
-layout(binding = 0) uniform UniformBufferObject {
-    vec4 color;  // 动态颜色
-} ubo;
-
 void main() {
-    // 使用 Uniform 颜色（覆盖顶点颜色）
-    outColor = ubo.color;
+    // 计算到正方形边界的距离（假设正方形边长为1.0）
+    float edgeWidth = 0.05;  // 边缘宽度（可调）
+    float distanceToEdge = min(
+        min(abs(fragPos.x - 0.5), abs(fragPos.x + 0.5)),  // X方向
+        min(abs(fragPos.y - 0.5), abs(fragPos.y + 0.5))   // Y方向
+    );
     
-    // 如需混合顶点颜色，可改为：
-    // outColor = vec4(fragColor * ubo.color.rgb, 1.0);
+    // 如果接近边缘，则混合黑色
+    float edgeFactor = smoothstep(0.0, edgeWidth, distanceToEdge);
+    vec3 finalColor = mix(vec3(0.0), fragColor, edgeFactor);  // 混合黑色和原色
+    
+    outColor = vec4(finalColor, 1.0);
 }
