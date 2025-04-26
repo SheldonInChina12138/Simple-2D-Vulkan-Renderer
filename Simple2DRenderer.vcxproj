@@ -24,6 +24,7 @@
     <ProjectGuid>{a1086284-62b2-474d-87c5-a4fc0d8ff1de}</ProjectGuid>
     <RootNamespace>GPUGamer</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <ProjectName>Simple2DRenderer</ProjectName>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
